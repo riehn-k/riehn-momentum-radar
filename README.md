@@ -25,7 +25,7 @@ On first launch, Windows SmartScreen may show a warning because the executable i
 - Ticker, company name, and rank
 - Performance over 180 trading days
 - Start price at the 180-trading-day reference date
-- Latest available daily closing price
+- Latest available price, including pre-market and post-market quotes when available
 - Calculation period
 
 Example:
@@ -43,9 +43,9 @@ Sources used:
 
 - DataHub for the S&P 500 constituent list
 - Wikipedia as a fallback for the S&P 500 constituent list
-- Yahoo Finance for daily stock price data
+- Yahoo Finance for daily and intraday stock price data
 
-The calculation is based on daily prices. The app does not use intraday or real-time tick data.
+The historical start price is based on daily prices. The latest price uses current intraday data when available, including pre-market and post-market quotes from Yahoo Finance.
 
 ## Calculation
 
@@ -65,7 +65,8 @@ The app refreshes:
 
 - automatically on startup
 - manually when the Refresh button is clicked
-- at the U.S. market open
+- during the U.S. pre-market session
+- shortly after the U.S. market open
 - 4 hours after the U.S. market open
 - at the U.S. market close
 
