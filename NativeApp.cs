@@ -83,9 +83,9 @@ internal sealed class MomentumRadarForm : Form
     {
         languageCode = StateStore.LoadLanguage();
         Text = "Riehn Momentum Radar";
-        Width = 1280;
-        Height = 840;
-        MinimumSize = new Size(1140, 760);
+        Width = 1360;
+        Height = 1060;
+        MinimumSize = new Size(1180, 960);
         BackColor = PageBack;
         ForeColor = TextMain;
         Font = new Font("Segoe UI", 10f);
@@ -217,6 +217,11 @@ internal sealed class MomentumRadarForm : Form
 
         dashboardView = new DashboardView();
         dashboardView.LanguageCode = languageCode;
+        dashboardView.PortfolioSymbols = StateStore.LoadPortfolioSymbols();
+        dashboardView.PortfolioChanged += delegate
+        {
+            StateStore.SavePortfolioSymbols(dashboardView.PortfolioSymbols);
+        };
         dashboardView.Dock = DockStyle.Fill;
         dashboardView.Margin = new Padding(0);
         root.Controls.Add(dashboardView, 0, 2);
@@ -1071,7 +1076,11 @@ internal static class LocalizedText
             { "PlacesSixToTen", "Platz 6 bis 10" },
             { "Rank", "Rang" },
             { "Ticker", "Ticker" },
-            { "Company", "Firma" }
+            { "Company", "Firma" },
+            { "Momentum", "Momentum" },
+            { "ReferencePrice", "Stichtag Kurs" },
+            { "Portfolio", "im Depot" },
+            { "SellCandidates", "zu Verkaufende Aktien" }
         };
 
         texts["en"] = new Dictionary<string, string>
@@ -1099,7 +1108,11 @@ internal static class LocalizedText
             { "PlacesSixToTen", "Places 6 to 10" },
             { "Rank", "Rank" },
             { "Ticker", "Ticker" },
-            { "Company", "Company" }
+            { "Company", "Company" },
+            { "Momentum", "Momentum" },
+            { "ReferencePrice", "Reference price" },
+            { "Portfolio", "In portfolio" },
+            { "SellCandidates", "Stocks to sell" }
         };
 
         texts["es"] = new Dictionary<string, string>
@@ -1127,7 +1140,11 @@ internal static class LocalizedText
             { "PlacesSixToTen", "Puestos 6 a 10" },
             { "Rank", "Puesto" },
             { "Ticker", "Ticker" },
-            { "Company", "Empresa" }
+            { "Company", "Empresa" },
+            { "Momentum", "Momentum" },
+            { "ReferencePrice", "Precio base" },
+            { "Portfolio", "En cartera" },
+            { "SellCandidates", "Acciones para vender" }
         };
 
         return texts;
@@ -1217,6 +1234,10 @@ internal sealed class DashboardView : Control
     private MarketResult result;
     private bool isLoading;
     private string languageCode = "de";
+    private HashSet<string> portfolioSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly List<PortfolioHit> portfolioHits = new List<PortfolioHit>();
+
+    public event EventHandler PortfolioChanged;
 
     public DashboardView()
     {
@@ -1255,6 +1276,18 @@ internal sealed class DashboardView : Control
         }
     }
 
+    public HashSet<string> PortfolioSymbols
+    {
+        get { return new HashSet<string>(portfolioSymbols, StringComparer.OrdinalIgnoreCase); }
+        set
+        {
+            portfolioSymbols = value == null
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(value, StringComparer.OrdinalIgnoreCase);
+            Invalidate();
+        }
+    }
+
     private string T(string key)
     {
         return LocalizedText.Get(languageCode, key);
@@ -1263,6 +1296,7 @@ internal sealed class DashboardView : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        portfolioHits.Clear();
         Graphics g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -1272,11 +1306,31 @@ internal sealed class DashboardView : Control
         int x = 0;
         int y = 10;
 
-        DrawMetrics(g, new Rectangle(x, y, width, 74));
-        y += 88;
-        DrawTopFive(g, new Rectangle(x, y, width, 216));
-        y += 238;
-        DrawLowerTable(g, new Rectangle(x, y, width, Math.Max(160, ClientSize.Height - y - 8)));
+        const int metricsHeight = 68;
+        const int topFiveHeight = 216;
+        const int lowerHeight = 222;
+        const int sectionGap = 16;
+
+        DrawMetrics(g, new Rectangle(x, y, width, metricsHeight));
+        y += metricsHeight + 12;
+        DrawTopFive(g, new Rectangle(x, y, width, topFiveHeight));
+        y += topFiveHeight + 16;
+        DrawLowerTable(g, new Rectangle(x, y, width, lowerHeight));
+        y += lowerHeight + sectionGap;
+        DrawSellTable(g, new Rectangle(x, y, width, Math.Max(236, ClientSize.Height - y - 8)));
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        foreach (PortfolioHit hit in portfolioHits.ToArray())
+        {
+            if (hit.Bounds.Contains(e.Location))
+            {
+                TogglePortfolio(hit.Symbol);
+                return;
+            }
+        }
     }
 
     private void DrawMetrics(Graphics g, Rectangle area)
@@ -1335,10 +1389,9 @@ internal sealed class DashboardView : Control
             int cardX = bounds.X + i * (cardWidth + gap);
             int width = i == 4 ? bounds.Right - cardX : cardWidth;
             Rectangle card = new Rectangle(cardX, bounds.Y, width, bounds.Height);
-            bool first = i == 0;
             bool promoted = IsPromoted(stockIndex: i);
-            FillRounded(g, card, 8, promoted ? Color.FromArgb(255, 249, 235) : first ? CardBackSoft : CardBack, promoted ? Gold : first ? Teal : Line, true);
-            FillRounded(g, new Rectangle(card.X + 18, card.Y + 16, card.Width - 36, 4), 3, promoted ? Gold : first ? Teal : Color.FromArgb(224, 199, 135), null, false);
+            FillRounded(g, card, 8, promoted ? CardBackSoft : CardBack, promoted ? Teal : Line, true);
+            FillRounded(g, new Rectangle(card.X + 18, card.Y + 16, card.Width - 36, 4), 3, promoted ? Teal : Color.FromArgb(224, 199, 135), null, false);
 
             if (isLoading && result == null)
             {
@@ -1353,29 +1406,30 @@ internal sealed class DashboardView : Control
             }
 
             StockPerformance stock = result.Top10[i];
-            promoted = stock.EnteredTopFiveFromReference || stock.EnteredTopTenFromReference;
+            promoted = stock.EnteredTopFiveFromReference;
             using (Font rankFont = new Font("Segoe UI", 10f, FontStyle.Bold))
             using (Font symbolFont = new Font("Segoe UI Semibold", 20.5f, FontStyle.Bold))
             using (Font nameFont = new Font("Segoe UI", 9.2f))
             using (Font changeFont = new Font("Segoe UI Semibold", 18.5f, FontStyle.Bold))
             using (Font priceFont = new Font("Segoe UI", 8.4f, FontStyle.Bold))
-            using (Font dateFont = new Font("Segoe UI", 8.5f))
+            using (Font portfolioFont = new Font("Segoe UI", 8.7f, FontStyle.Bold))
             {
                 int left = card.X + 18;
                 int innerWidth = card.Width - 36;
                 Rectangle rankPill = new Rectangle(left, card.Y + 28, 54, 24);
-                FillRounded(g, rankPill, 8, first ? Teal : SoftGold, first ? Teal : Color.FromArgb(236, 213, 150), false);
-                DrawText(g, "#" + stock.Rank, rankFont, first ? Color.White : Gold, rankPill, StringAlignment.Center, StringAlignment.Center);
+                FillRounded(g, rankPill, 8, promoted ? Teal : SoftGold, promoted ? Teal : Color.FromArgb(236, 213, 150), false);
+                DrawText(g, "#" + stock.Rank, rankFont, promoted ? Color.White : Gold, rankPill, StringAlignment.Center, StringAlignment.Center);
                 if (stock.ReferenceRank > 0)
                 {
                     string reference = "Stichtag #" + stock.ReferenceRank;
                     Rectangle refPill = new Rectangle(left + 62, card.Y + 28, innerWidth - 62, 24);
-                    DrawText(g, reference, rankFont, promoted ? Gold : TextMuted, refPill, StringAlignment.Near, StringAlignment.Center);
+                    DrawText(g, reference, rankFont, promoted ? Teal : TextMuted, refPill, StringAlignment.Near, StringAlignment.Center);
                 }
-                DrawText(g, stock.Symbol, symbolFont, TextMain, new Rectangle(left, card.Y + 61, innerWidth, 38), StringAlignment.Near, StringAlignment.Near);
-                DrawText(g, stock.Name, nameFont, TextMuted, new Rectangle(left, card.Y + 100, innerWidth, 32), StringAlignment.Near, StringAlignment.Near);
-                DrawText(g, FormatPercent(stock.ChangePercent), changeFont, Green, new Rectangle(left, card.Y + 133, innerWidth, 38), StringAlignment.Near, StringAlignment.Near);
-                DrawText(g, FormatPrice(stock.StartPrice) + " -> " + FormatPrice(stock.EndPrice), priceFont, TextMain, new Rectangle(left, card.Bottom - 36, innerWidth, 18), StringAlignment.Near, StringAlignment.Near);
+                DrawText(g, stock.Symbol, symbolFont, TextMain, new Rectangle(left, card.Y + 62, innerWidth, 36), StringAlignment.Near, StringAlignment.Near);
+                DrawText(g, stock.Name, nameFont, TextMuted, new Rectangle(left, card.Y + 100, innerWidth, 28), StringAlignment.Near, StringAlignment.Near);
+                DrawText(g, FormatPercent(stock.ChangePercent), changeFont, Green, new Rectangle(left, card.Y + 132, innerWidth, 34), StringAlignment.Near, StringAlignment.Near);
+                DrawText(g, FormatPrice(stock.StartPrice) + " -> " + FormatPrice(stock.EndPrice), priceFont, TextMain, new Rectangle(left, card.Bottom - 52, innerWidth, 18), StringAlignment.Near, StringAlignment.Near);
+                DrawPortfolioCheck(g, new Rectangle(left, card.Bottom - 28, innerWidth, 24), stock.Symbol, portfolioFont);
             }
         }
     }
@@ -1388,7 +1442,7 @@ internal sealed class DashboardView : Control
         }
 
         StockPerformance stock = result.Top10[stockIndex];
-        return stock.EnteredTopFiveFromReference || stock.EnteredTopTenFromReference;
+        return stock.EnteredTopFiveFromReference;
     }
 
     private void DrawLoadingCard(Graphics g, Rectangle card, int rank)
@@ -1414,14 +1468,14 @@ internal sealed class DashboardView : Control
             DrawText(g, T("PlacesSixToTen"), titleFont, TextMain, new Rectangle(area.X, area.Y, area.Width, 30), StringAlignment.Near, StringAlignment.Near);
         }
 
-        int headerHeight = 36;
-        int rowHeight = 34;
+        int headerHeight = 34;
+        int rowHeight = 32;
         int desiredTableHeight = headerHeight + rowHeight * 5 + 2;
-        Rectangle table = new Rectangle(area.X, area.Y + 40, area.Width - 2, Math.Min(desiredTableHeight, area.Height - 43));
+        Rectangle table = new Rectangle(area.X, area.Y + 38, area.Width - 2, desiredTableHeight);
         FillRounded(g, table, 8, CardBack, Line, true);
 
-        int[] weights = { 7, 9, 29, 13, 13, 14, 15 };
-        string[] headers = { T("Rank"), T("Ticker"), T("Company"), "180 " + T("TradingDays"), T("ReferenceRank"), T("StartPrice"), T("TodayPrice") };
+        int[] weights = { 7, 10, 31, 12, 13, 13, 14 };
+        string[] headers = { T("Rank"), T("Ticker"), T("Company"), T("Momentum"), T("ReferenceRank"), T("TodayPrice"), T("Portfolio") };
 
         FillRounded(g, new Rectangle(table.X, table.Y, table.Width, headerHeight), 8, HeaderBack, null, false);
 
@@ -1459,10 +1513,10 @@ internal sealed class DashboardView : Control
                 }
 
                 StockPerformance stock = result.Top10[row + 5];
-                bool promoted = stock.EnteredTopTenFromReference || stock.EnteredTopFiveFromReference;
+                bool promoted = stock.EnteredTopFiveFromReference;
                 if (promoted)
                 {
-                    using (SolidBrush highlight = new SolidBrush(Color.FromArgb(255, 249, 235)))
+                    using (SolidBrush highlight = new SolidBrush(CardBackSoft))
                     {
                         g.FillRectangle(highlight, new Rectangle(table.X, y, table.Width, rowHeight));
                     }
@@ -1475,19 +1529,193 @@ internal sealed class DashboardView : Control
                     stock.Name,
                     FormatPercent(stock.ChangePercent),
                     stock.ReferenceRank > 0 ? "#" + stock.ReferenceRank : "-",
-                    FormatPrice(stock.StartPrice),
-                    FormatPrice(stock.EndPrice)
+                    FormatPrice(stock.EndPrice),
+                    ""
                 };
 
                 for (int col = 0; col < values.Length; col++)
                 {
                     Rectangle cell = new Rectangle(xs[col] + 10, y + 8, xs[col + 1] - xs[col] - 20, 22);
-                    Color color = col == 3 ? Green : col == 4 && promoted ? Gold : TextMain;
-                    Font font = (col == 3 || col == 4 || col == 5 || col == 6) ? rowBold : rowFont;
+                    if (col == 6)
+                    {
+                        DrawPortfolioCheck(g, new Rectangle(xs[col] + 10, y + 6, xs[col + 1] - xs[col] - 20, 24), stock.Symbol, rowBold);
+                        continue;
+                    }
+
+                    Color color = col == 3 ? Green : col == 4 && promoted ? Teal : TextMain;
+                    Font font = (col == 3 || col == 4 || col == 5) ? rowBold : rowFont;
                     DrawText(g, values[col], font, color, cell, StringAlignment.Near, StringAlignment.Near);
                 }
             }
         }
+    }
+
+    private void DrawSellTable(Graphics g, Rectangle area)
+    {
+        if (area.Height < 96)
+        {
+            return;
+        }
+
+        using (Font titleFont = new Font("Segoe UI Semibold", 15.5f, FontStyle.Bold))
+        {
+            DrawText(g, T("SellCandidates"), titleFont, TextMain, new Rectangle(area.X, area.Y, area.Width, 30), StringAlignment.Near, StringAlignment.Near);
+        }
+
+        List<StockPerformance> sellCandidates = GetSellCandidates();
+        int headerHeight = 34;
+        int rowHeight = 32;
+        int rowsThatFit = Math.Max(5, (area.Height - 40 - headerHeight - 2) / rowHeight);
+        int visibleRows = Math.Max(5, Math.Min(8, rowsThatFit));
+        Rectangle table = new Rectangle(area.X, area.Y + 38, area.Width - 2, headerHeight + rowHeight * visibleRows + 2);
+        FillRounded(g, table, 8, CardBack, Line, true);
+
+        int[] weights = { 12, 10, 36, 14, 14, 14 };
+        string[] headers = { T("ReferenceRank"), T("Ticker"), T("Company"), T("Momentum"), T("ReferencePrice"), T("Portfolio") };
+
+        FillRounded(g, new Rectangle(table.X, table.Y, table.Width, headerHeight), 8, HeaderBack, null, false);
+
+        using (Pen linePen = new Pen(Line))
+        using (Font headerFont = new Font("Segoe UI", 9f, FontStyle.Bold))
+        using (Font rowFont = new Font("Segoe UI", 9f))
+        using (Font rowBold = new Font("Segoe UI Semibold", 9.2f, FontStyle.Bold))
+        {
+            int[] xs = ColumnEdges(table, weights);
+            for (int i = 0; i < headers.Length; i++)
+            {
+                Rectangle cell = new Rectangle(xs[i] + 10, table.Y + 8, xs[i + 1] - xs[i] - 20, 20);
+                DrawText(g, headers[i], headerFont, TextMain, cell, StringAlignment.Near, StringAlignment.Near);
+                if (i > 0)
+                {
+                    g.DrawLine(linePen, xs[i], table.Y + 7, xs[i], table.Y + headerHeight - 7);
+                }
+            }
+
+            for (int row = 0; row < visibleRows; row++)
+            {
+                int y = table.Y + headerHeight + row * rowHeight;
+                if (row % 2 == 1)
+                {
+                    using (SolidBrush alt = new SolidBrush(RowAlt))
+                    {
+                        g.FillRectangle(alt, new Rectangle(table.X, y, table.Width, rowHeight));
+                    }
+                }
+
+                g.DrawLine(linePen, table.X, y, table.Right, y);
+                if (sellCandidates.Count <= row)
+                {
+                    continue;
+                }
+
+                StockPerformance stock = sellCandidates[row];
+                string[] values =
+                {
+                    stock.Rank > 0 ? "#" + stock.Rank : "-",
+                    stock.Symbol,
+                    stock.Name,
+                    FormatPercent(stock.ChangePercent),
+                    FormatPrice(stock.EndPrice),
+                    ""
+                };
+
+                for (int col = 0; col < values.Length; col++)
+                {
+                    if (col == 5)
+                    {
+                        DrawPortfolioCheck(g, new Rectangle(xs[col] + 10, y + 6, xs[col + 1] - xs[col] - 20, 24), stock.Symbol, rowBold);
+                        continue;
+                    }
+
+                    Rectangle cell = new Rectangle(xs[col] + 10, y + 8, xs[col + 1] - xs[col] - 20, 22);
+                    Color color = col == 3 ? Green : TextMain;
+                    Font font = (col == 0 || col == 3 || col == 4) ? rowBold : rowFont;
+                    DrawText(g, values[col], font, color, cell, StringAlignment.Near, StringAlignment.Near);
+                }
+            }
+        }
+    }
+
+    private List<StockPerformance> GetSellCandidates()
+    {
+        if (result == null || result.ReferenceTop10 == null || result.ReferenceTop10.Count == 0)
+        {
+            return new List<StockPerformance>();
+        }
+
+        var currentTop10 = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (result.Top10 != null)
+        {
+            foreach (StockPerformance stock in result.Top10)
+            {
+                currentTop10.Add(stock.Symbol);
+            }
+        }
+
+        return result.ReferenceTop10
+            .Where(stock => stock != null
+                && !string.IsNullOrWhiteSpace(stock.Symbol)
+                && !currentTop10.Contains(stock.Symbol)
+                && portfolioSymbols.Contains(stock.Symbol))
+            .OrderBy(stock => stock.Rank)
+            .ToList();
+    }
+
+    private void TogglePortfolio(string symbol)
+    {
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            return;
+        }
+
+        if (portfolioSymbols.Contains(symbol))
+        {
+            portfolioSymbols.Remove(symbol);
+        }
+        else
+        {
+            portfolioSymbols.Add(symbol);
+        }
+
+        EventHandler handler = PortfolioChanged;
+        if (handler != null)
+        {
+            handler(this, EventArgs.Empty);
+        }
+
+        Invalidate();
+    }
+
+    private void DrawPortfolioCheck(Graphics g, Rectangle area, string symbol, Font font)
+    {
+        if (string.IsNullOrWhiteSpace(symbol) || area.Width < 28)
+        {
+            return;
+        }
+
+        bool checkedValue = portfolioSymbols.Contains(symbol);
+        Rectangle hit = new Rectangle(area.X, area.Y, area.Width, area.Height);
+        portfolioHits.Add(new PortfolioHit { Symbol = symbol, Bounds = hit });
+
+        Rectangle box = new Rectangle(hit.X, hit.Y + 3, 17, 17);
+        Color border = checkedValue ? Teal : Color.FromArgb(190, 202, 216);
+        Color fill = checkedValue ? Teal : Color.White;
+        FillRounded(g, box, 5, fill, border, false);
+        if (checkedValue)
+        {
+            using (Pen pen = new Pen(Color.White, 2f))
+            {
+                g.DrawLines(pen, new[]
+                {
+                    new Point(box.X + 4, box.Y + 9),
+                    new Point(box.X + 8, box.Y + 13),
+                    new Point(box.X + 14, box.Y + 5)
+                });
+            }
+        }
+
+        Rectangle label = new Rectangle(hit.X + 24, hit.Y, Math.Max(0, hit.Width - 24), hit.Height);
+        DrawText(g, T("Portfolio"), font, checkedValue ? TextMain : TextMuted, label, StringAlignment.Near, StringAlignment.Center);
     }
 
     private static int[] ColumnEdges(Rectangle table, int[] weights)
@@ -1625,9 +1853,12 @@ internal static class MarketData
 
         var top10 = ranked.Take(10).ToList();
         DateTime referenceTradingDate = DateTime.MinValue;
+        List<StockPerformance> referenceTop10 = new List<StockPerformance>();
         if (referenceDate.HasValue)
         {
-            referenceTradingDate = AnnotateReferenceRanks(constituents, top10, days, referenceDate.Value);
+            ReferenceAnnotation annotation = AnnotateReferenceRanks(constituents, top10, days, referenceDate.Value);
+            referenceTradingDate = annotation.TradingDate;
+            referenceTop10 = annotation.Top10;
         }
 
         return new MarketResult
@@ -1639,11 +1870,12 @@ internal static class MarketData
             UpdatedAt = DateTime.Now,
             ReferenceDate = referenceDate.HasValue ? referenceDate.Value.Date : DateTime.MinValue,
             ReferenceTradingDate = referenceTradingDate,
+            ReferenceTop10 = referenceTop10,
             Top10 = top10
         };
     }
 
-    private static DateTime AnnotateReferenceRanks(List<Constituent> constituents, List<StockPerformance> currentTop10, int days, DateTime referenceDate)
+    private static ReferenceAnnotation AnnotateReferenceRanks(List<Constituent> constituents, List<StockPerformance> currentTop10, int days, DateTime referenceDate)
     {
         List<StockPerformance> referencePerformances = FetchPerformancesBatch(constituents, days, referenceDate.Date, false);
         List<StockPerformance> referenceRanked = referencePerformances.OrderByDescending(s => s.ChangePercent).ToList();
@@ -1668,7 +1900,11 @@ internal static class MarketData
             current.EnteredTopFiveFromReference = current.Rank <= 5 && reference.Rank > 5;
         }
 
-        return referenceRanked.Count == 0 ? DateTime.MinValue : referenceRanked.Max(stock => stock.EndDate);
+        return new ReferenceAnnotation
+        {
+            TradingDate = referenceRanked.Count == 0 ? DateTime.MinValue : referenceRanked.Max(stock => stock.EndDate),
+            Top10 = referenceRanked.Take(10).ToList()
+        };
     }
 
     private static ConstituentSet GetConstituents()
@@ -2315,6 +2551,7 @@ internal static class StateStore
     private static readonly string TopFivePath = Path.Combine(AppDir, "top5.txt");
     private static readonly string NotificationsPath = Path.Combine(AppDir, "notifications.txt");
     private static readonly string LanguagePath = Path.Combine(AppDir, "language.txt");
+    private static readonly string PortfolioPath = Path.Combine(AppDir, "portfolio.txt");
     private static readonly string CachePath = Path.Combine(AppDir, "last-result.json");
 
     public static List<string> LoadTopFive()
@@ -2379,6 +2616,45 @@ internal static class StateStore
     {
         Directory.CreateDirectory(AppDir);
         File.WriteAllText(LanguagePath, LocalizedText.NormalizeLanguage(languageCode));
+    }
+
+    public static HashSet<string> LoadPortfolioSymbols()
+    {
+        try
+        {
+            if (!File.Exists(PortfolioPath))
+            {
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return new HashSet<string>(
+                File.ReadAllLines(PortfolioPath)
+                    .Select(line => line.Trim())
+                    .Where(line => line.Length > 0),
+                StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public static void SavePortfolioSymbols(IEnumerable<string> symbols)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppDir);
+            string[] lines = (symbols ?? Enumerable.Empty<string>())
+                .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+                .Select(symbol => symbol.Trim().ToUpperInvariant())
+                .Distinct()
+                .OrderBy(symbol => symbol)
+                .ToArray();
+            File.WriteAllLines(PortfolioPath, lines);
+        }
+        catch
+        {
+        }
     }
 
     public static MarketResult LoadCachedResult()
@@ -2537,6 +2813,12 @@ internal sealed class StockPerformance
     public bool EnteredTopFiveFromReference;
 }
 
+internal sealed class ReferenceAnnotation
+{
+    public DateTime TradingDate;
+    public List<StockPerformance> Top10;
+}
+
 internal sealed class CurrentQuote
 {
     public double Price;
@@ -2552,7 +2834,14 @@ internal sealed class MarketResult
     public DateTime UpdatedAt;
     public DateTime ReferenceDate;
     public DateTime ReferenceTradingDate;
+    public List<StockPerformance> ReferenceTop10;
     public List<StockPerformance> Top10;
+}
+
+internal sealed class PortfolioHit
+{
+    public string Symbol;
+    public Rectangle Bounds;
 }
 
 internal sealed class ConstituentSet
