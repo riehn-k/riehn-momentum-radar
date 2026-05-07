@@ -58,6 +58,8 @@ internal sealed class MomentumRadarForm : Form
 
     private readonly Button refreshButton;
     private readonly CheckBox notificationsToggle;
+    private readonly Label referenceDateLabel;
+    private readonly MaterialDatePicker referenceDatePicker;
     private readonly MaterialLanguageDropdown languageSelector;
     private readonly Label statusLabel;
     private readonly Label titleLabel;
@@ -165,12 +167,37 @@ internal sealed class MomentumRadarForm : Form
         };
         leftTools.Controls.Add(notificationsToggle);
 
+        referenceDateLabel = new Label();
+        referenceDateLabel.Text = T("ReferenceDate");
+        referenceDateLabel.AutoSize = false;
+        referenceDateLabel.Width = 72;
+        referenceDateLabel.Height = 40;
+        referenceDateLabel.Margin = new Padding(18, 0, 0, 0);
+        referenceDateLabel.ForeColor = TextMuted;
+        referenceDateLabel.TextAlign = ContentAlignment.MiddleLeft;
+        referenceDateLabel.Font = new Font("Segoe UI", 9.5f);
+        leftTools.Controls.Add(referenceDateLabel);
+
+        referenceDatePicker = new MaterialDatePicker();
+        referenceDatePicker.Value = new DateTime(2026, 1, 1);
+        referenceDatePicker.MaxDate = DateTime.Today;
+        referenceDatePicker.Width = 142;
+        referenceDatePicker.Height = 40;
+        referenceDatePicker.Margin = new Padding(0, 5, 0, 0);
+        referenceDatePicker.Font = new Font("Segoe UI", 10f);
+        referenceDatePicker.ValueChanged += delegate
+        {
+            if (!isLoading)
+            {
+                RefreshData();
+            }
+        };
+        leftTools.Controls.Add(referenceDatePicker);
+
         languageSelector = new MaterialLanguageDropdown();
         languageSelector.Width = 158;
         languageSelector.Height = 40;
         languageSelector.Margin = new Padding(0, 3, 0, 0);
-        languageSelector.BackColor = Color.White;
-        languageSelector.ForeColor = TextMain;
         languageSelector.Font = new Font("Segoe UI", 10f);
         languageSelector.Items.Add(new LanguageChoice("de", "Deutsch"));
         languageSelector.Items.Add(new LanguageChoice("en", "English"));
@@ -311,6 +338,7 @@ internal sealed class MomentumRadarForm : Form
 
         refreshButton.Text = T("Refresh");
         notificationsToggle.Text = T("Notifications");
+        referenceDateLabel.Text = T("ReferenceDate");
         dashboardView.LanguageCode = languageCode;
         dashboardView.Invalidate();
 
@@ -382,7 +410,8 @@ internal sealed class MomentumRadarForm : Form
             RenderLoadingCards();
         }
 
-        Task.Factory.StartNew(function: () => MarketData.GetTopMovers(180)).ContinueWith(task =>
+        DateTime referenceDate = referenceDatePicker.Value.Date;
+        Task.Factory.StartNew(function: () => MarketData.GetTopMovers(180, referenceDate)).ContinueWith(task =>
         {
             BeginInvoke((Action)(() =>
             {
@@ -737,76 +766,253 @@ internal sealed class MaterialToggle : CheckBox
     }
 }
 
-internal sealed class MaterialLanguageDropdown : ComboBox
+internal sealed class MaterialLanguageDropdown : Control
+{
+    private static readonly Color Border = Color.FromArgb(220, 228, 238);
+    private static readonly Color Teal = Color.FromArgb(0, 137, 123);
+    private static readonly Color TextMain = Color.FromArgb(25, 32, 43);
+    private static readonly Color TextMuted = Color.FromArgb(92, 103, 119);
+    public readonly List<object> Items = new List<object>();
+    public event EventHandler SelectedIndexChanged;
+    private int selectedIndex = -1;
+
+    public MaterialLanguageDropdown()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        BackColor = Color.White;
+        Cursor = Cursors.Hand;
+    }
+
+    public int SelectedIndex
+    {
+        get { return selectedIndex; }
+        set
+        {
+            if (value < -1 || value >= Items.Count || selectedIndex == value)
+            {
+                return;
+            }
+
+            selectedIndex = value;
+            Invalidate();
+            if (SelectedIndexChanged != null)
+            {
+                SelectedIndexChanged(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public object SelectedItem
+    {
+        get
+        {
+            return selectedIndex >= 0 && selectedIndex < Items.Count ? Items[selectedIndex] : null;
+        }
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        base.OnClick(e);
+        ShowMenu();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
+
+        Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (GraphicsPath path = RoundedPath(rect, Height / 2))
+        using (SolidBrush brush = new SolidBrush(Color.White))
+        using (Pen pen = new Pen(Border))
+        {
+            e.Graphics.FillPath(brush, path);
+            e.Graphics.DrawPath(pen, path);
+        }
+
+        string text = SelectedItem == null ? "" : SelectedItem.ToString();
+        TextRenderer.DrawText(e.Graphics, text, Font, new Rectangle(16, 0, Width - 42, Height), TextMain, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+
+        Point[] arrow =
+        {
+            new Point(Width - 25, Height / 2 - 2),
+            new Point(Width - 15, Height / 2 - 2),
+            new Point(Width - 20, Height / 2 + 4)
+        };
+        using (SolidBrush arrowBrush = new SolidBrush(TextMuted))
+        {
+            e.Graphics.FillPolygon(arrowBrush, arrow);
+        }
+    }
+
+    private void ShowMenu()
+    {
+        var menu = new ContextMenuStrip();
+        menu.RenderMode = ToolStripRenderMode.Professional;
+        menu.Renderer = new ToolStripProfessionalRenderer(new MaterialMenuColors());
+        menu.ShowImageMargin = false;
+        menu.Font = Font;
+
+        for (int i = 0; i < Items.Count; i++)
+        {
+            int index = i;
+            var item = new ToolStripMenuItem(Items[i].ToString());
+            item.Padding = new Padding(10, 5, 18, 5);
+            item.ForeColor = TextMain;
+            item.BackColor = Color.White;
+            item.Click += delegate { SelectedIndex = index; };
+            if (i == selectedIndex)
+            {
+                item.ForeColor = Teal;
+                item.Checked = true;
+            }
+
+            menu.Items.Add(item);
+        }
+
+        menu.Show(this, new Point(0, Height + 4));
+    }
+
+    private static GraphicsPath RoundedPath(Rectangle rect, int radius)
+    {
+        int d = radius * 2;
+        var path = new GraphicsPath();
+        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+internal sealed class MaterialDatePicker : Control
 {
     private static readonly Color Border = Color.FromArgb(220, 228, 238);
     private static readonly Color TextMain = Color.FromArgb(25, 32, 43);
     private static readonly Color TextMuted = Color.FromArgb(92, 103, 119);
+    private DateTime value = DateTime.Today;
+    private DateTime maxDate = DateTime.MaxValue.Date;
+    public event EventHandler ValueChanged;
 
-    public MaterialLanguageDropdown()
+    public MaterialDatePicker()
     {
-        DropDownStyle = ComboBoxStyle.DropDownList;
-        DrawMode = DrawMode.OwnerDrawFixed;
-        ItemHeight = 28;
-        FlatStyle = FlatStyle.Flat;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Cursor = Cursors.Hand;
         BackColor = Color.White;
     }
 
-    protected override void OnDrawItem(DrawItemEventArgs e)
+    public DateTime Value
     {
-        e.DrawBackground();
-        if (e.Index < 0)
+        get { return value; }
+        set
         {
-            return;
-        }
-
-        string text = GetItemText(Items[e.Index]);
-        Color back = (e.State & DrawItemState.Selected) == DrawItemState.Selected
-            ? Color.FromArgb(232, 247, 244)
-            : Color.White;
-        Color fore = Enabled ? TextMain : TextMuted;
-
-        using (SolidBrush backBrush = new SolidBrush(back))
-        {
-            e.Graphics.FillRectangle(backBrush, e.Bounds);
-        }
-
-        TextRenderer.DrawText(
-            e.Graphics,
-            text,
-            Font,
-            new Rectangle(e.Bounds.X + 10, e.Bounds.Y, e.Bounds.Width - 20, e.Bounds.Height),
-            fore,
-            TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        base.WndProc(ref m);
-
-        const int wmPaint = 0x000F;
-        if (m.Msg != wmPaint || !IsHandleCreated)
-        {
-            return;
-        }
-
-        using (Graphics g = Graphics.FromHwnd(Handle))
-        using (Pen pen = new Pen(Border))
-        {
-            Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            g.DrawRectangle(pen, rect);
-            Point[] arrow =
+            DateTime next = value.Date;
+            if (next > maxDate)
             {
-                new Point(Width - 22, Height / 2 - 2),
-                new Point(Width - 14, Height / 2 - 2),
-                new Point(Width - 18, Height / 2 + 3)
-            };
-            using (SolidBrush brush = new SolidBrush(TextMuted))
+                next = maxDate;
+            }
+
+            if (this.value == next)
             {
-                g.FillPolygon(brush, arrow);
+                return;
+            }
+
+            this.value = next;
+            Invalidate();
+            if (ValueChanged != null)
+            {
+                ValueChanged(this, EventArgs.Empty);
             }
         }
     }
+
+    public DateTime MaxDate
+    {
+        get { return maxDate; }
+        set
+        {
+            maxDate = value.Date;
+            if (this.value > maxDate)
+            {
+                Value = maxDate;
+            }
+        }
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        base.OnClick(e);
+        ShowCalendar();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
+
+        Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (GraphicsPath path = RoundedPath(rect, Height / 2))
+        using (SolidBrush brush = new SolidBrush(Color.White))
+        using (Pen pen = new Pen(Border))
+        {
+            e.Graphics.FillPath(brush, path);
+            e.Graphics.DrawPath(pen, path);
+        }
+
+        TextRenderer.DrawText(e.Graphics, value.ToString("dd.MM.yyyy", CultureInfo.GetCultureInfo("de-DE")), Font, new Rectangle(14, 0, Width - 38, Height), TextMain, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        using (Pen iconPen = new Pen(TextMuted, 1.4f))
+        {
+            Rectangle icon = new Rectangle(Width - 28, (Height - 16) / 2, 15, 15);
+            e.Graphics.DrawRectangle(iconPen, icon);
+            e.Graphics.DrawLine(iconPen, icon.X, icon.Y + 4, icon.Right, icon.Y + 4);
+        }
+    }
+
+    private void ShowCalendar()
+    {
+        var calendar = new MonthCalendar();
+        calendar.MaxSelectionCount = 1;
+        calendar.MaxDate = MaxDate;
+        calendar.SelectionStart = Value;
+        calendar.SelectionEnd = Value;
+
+        var host = new ToolStripControlHost(calendar);
+        host.Margin = Padding.Empty;
+        host.Padding = Padding.Empty;
+        var dropDown = new ToolStripDropDown();
+        dropDown.Padding = Padding.Empty;
+        dropDown.Items.Add(host);
+        calendar.DateSelected += delegate
+        {
+            Value = calendar.SelectionStart;
+            dropDown.Close();
+        };
+
+        dropDown.Show(this, new Point(0, Height + 4));
+    }
+
+    private static GraphicsPath RoundedPath(Rectangle rect, int radius)
+    {
+        int d = radius * 2;
+        var path = new GraphicsPath();
+        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+internal sealed class MaterialMenuColors : ProfessionalColorTable
+{
+    public override Color MenuItemSelected { get { return Color.FromArgb(232, 247, 244); } }
+    public override Color MenuItemBorder { get { return Color.FromArgb(0, 137, 123); } }
+    public override Color ToolStripDropDownBackground { get { return Color.White; } }
+    public override Color ImageMarginGradientBegin { get { return Color.White; } }
+    public override Color ImageMarginGradientMiddle { get { return Color.White; } }
+    public override Color ImageMarginGradientEnd { get { return Color.White; } }
 }
 
 internal static class LocalizedText
@@ -858,6 +1064,8 @@ internal static class LocalizedText
             { "TradingDays", "Handelstage" },
             { "StartPrice", "Startkurs" },
             { "TodayPrice", "Heute" },
+            { "ReferenceDate", "Stichtag" },
+            { "ReferenceRank", "Stichtag Rang" },
             { "DateTo", "bis" },
             { "LoadingCard", "Lade Daten..." },
             { "PlacesSixToTen", "Platz 6 bis 10" },
@@ -884,6 +1092,8 @@ internal static class LocalizedText
             { "TradingDays", "trading days" },
             { "StartPrice", "Start price" },
             { "TodayPrice", "Today" },
+            { "ReferenceDate", "Reference date" },
+            { "ReferenceRank", "Reference rank" },
             { "DateTo", "to" },
             { "LoadingCard", "Loading data..." },
             { "PlacesSixToTen", "Places 6 to 10" },
@@ -910,6 +1120,8 @@ internal static class LocalizedText
             { "TradingDays", "días bursátiles" },
             { "StartPrice", "Precio inicial" },
             { "TodayPrice", "Hoy" },
+            { "ReferenceDate", "Fecha base" },
+            { "ReferenceRank", "Puesto base" },
             { "DateTo", "hasta" },
             { "LoadingCard", "Cargando datos..." },
             { "PlacesSixToTen", "Puestos 6 a 10" },
@@ -1086,17 +1298,24 @@ internal sealed class DashboardView : Control
 
         string[] labels = { T("Updated"), T("Period") };
         string[] values = { updated, period };
+        if (result != null && result.ReferenceTradingDate != DateTime.MinValue)
+        {
+            labels = new[] { T("Updated"), T("Period"), T("ReferenceDate") };
+            values = new[] { updated, period, result.ReferenceTradingDate.ToString("dd.MM.yyyy", CultureInfo.GetCultureInfo("de-DE")) };
+        }
+
         int gap = 12;
         Rectangle bounds = new Rectangle(area.X, area.Y, area.Width - 2, area.Height - 3);
-        int cardWidth = (bounds.Width - gap) / 2;
+        int count = labels.Length;
+        int cardWidth = (bounds.Width - gap * (count - 1)) / count;
 
         using (Font labelFont = new Font("Segoe UI", 9.5f))
         using (Font valueFont = new Font("Segoe UI Semibold", 12.2f, FontStyle.Bold))
         {
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < count; i++)
             {
                 int cardX = bounds.X + i * (cardWidth + gap);
-                int width = i == 1 ? bounds.Right - cardX : cardWidth;
+                int width = i == count - 1 ? bounds.Right - cardX : cardWidth;
                 Rectangle card = new Rectangle(cardX, bounds.Y, width, bounds.Height);
                 FillRounded(g, card, 8, CardBack, Line, true);
                 DrawText(g, labels[i], labelFont, TextMuted, new Rectangle(card.X + 20, card.Y + 14, card.Width - 40, 22), StringAlignment.Near, StringAlignment.Near);
@@ -1117,8 +1336,9 @@ internal sealed class DashboardView : Control
             int width = i == 4 ? bounds.Right - cardX : cardWidth;
             Rectangle card = new Rectangle(cardX, bounds.Y, width, bounds.Height);
             bool first = i == 0;
-            FillRounded(g, card, 8, first ? CardBackSoft : CardBack, first ? Teal : Line, true);
-            FillRounded(g, new Rectangle(card.X + 18, card.Y + 16, card.Width - 36, 4), 3, first ? Teal : Color.FromArgb(224, 199, 135), null, false);
+            bool promoted = IsPromoted(stockIndex: i);
+            FillRounded(g, card, 8, promoted ? Color.FromArgb(255, 249, 235) : first ? CardBackSoft : CardBack, promoted ? Gold : first ? Teal : Line, true);
+            FillRounded(g, new Rectangle(card.X + 18, card.Y + 16, card.Width - 36, 4), 3, promoted ? Gold : first ? Teal : Color.FromArgb(224, 199, 135), null, false);
 
             if (isLoading && result == null)
             {
@@ -1133,6 +1353,7 @@ internal sealed class DashboardView : Control
             }
 
             StockPerformance stock = result.Top10[i];
+            promoted = stock.EnteredTopFiveFromReference || stock.EnteredTopTenFromReference;
             using (Font rankFont = new Font("Segoe UI", 10f, FontStyle.Bold))
             using (Font symbolFont = new Font("Segoe UI Semibold", 20.5f, FontStyle.Bold))
             using (Font nameFont = new Font("Segoe UI", 9.2f))
@@ -1145,12 +1366,29 @@ internal sealed class DashboardView : Control
                 Rectangle rankPill = new Rectangle(left, card.Y + 28, 54, 24);
                 FillRounded(g, rankPill, 8, first ? Teal : SoftGold, first ? Teal : Color.FromArgb(236, 213, 150), false);
                 DrawText(g, "#" + stock.Rank, rankFont, first ? Color.White : Gold, rankPill, StringAlignment.Center, StringAlignment.Center);
+                if (stock.ReferenceRank > 0)
+                {
+                    string reference = "Stichtag #" + stock.ReferenceRank;
+                    Rectangle refPill = new Rectangle(left + 62, card.Y + 28, innerWidth - 62, 24);
+                    DrawText(g, reference, rankFont, promoted ? Gold : TextMuted, refPill, StringAlignment.Near, StringAlignment.Center);
+                }
                 DrawText(g, stock.Symbol, symbolFont, TextMain, new Rectangle(left, card.Y + 61, innerWidth, 38), StringAlignment.Near, StringAlignment.Near);
                 DrawText(g, stock.Name, nameFont, TextMuted, new Rectangle(left, card.Y + 100, innerWidth, 32), StringAlignment.Near, StringAlignment.Near);
                 DrawText(g, FormatPercent(stock.ChangePercent), changeFont, Green, new Rectangle(left, card.Y + 133, innerWidth, 38), StringAlignment.Near, StringAlignment.Near);
                 DrawText(g, FormatPrice(stock.StartPrice) + " -> " + FormatPrice(stock.EndPrice), priceFont, TextMain, new Rectangle(left, card.Bottom - 36, innerWidth, 18), StringAlignment.Near, StringAlignment.Near);
             }
         }
+    }
+
+    private bool IsPromoted(int stockIndex)
+    {
+        if (result == null || result.Top10 == null || result.Top10.Count <= stockIndex)
+        {
+            return false;
+        }
+
+        StockPerformance stock = result.Top10[stockIndex];
+        return stock.EnteredTopFiveFromReference || stock.EnteredTopTenFromReference;
     }
 
     private void DrawLoadingCard(Graphics g, Rectangle card, int rank)
@@ -1182,8 +1420,8 @@ internal sealed class DashboardView : Control
         Rectangle table = new Rectangle(area.X, area.Y + 40, area.Width - 2, Math.Min(desiredTableHeight, area.Height - 43));
         FillRounded(g, table, 8, CardBack, Line, true);
 
-        int[] weights = { 7, 10, 34, 15, 17, 17 };
-        string[] headers = { T("Rank"), T("Ticker"), T("Company"), "180 " + T("TradingDays"), T("StartPrice"), T("TodayPrice") };
+        int[] weights = { 7, 9, 29, 13, 13, 14, 15 };
+        string[] headers = { T("Rank"), T("Ticker"), T("Company"), "180 " + T("TradingDays"), T("ReferenceRank"), T("StartPrice"), T("TodayPrice") };
 
         FillRounded(g, new Rectangle(table.X, table.Y, table.Width, headerHeight), 8, HeaderBack, null, false);
 
@@ -1221,12 +1459,22 @@ internal sealed class DashboardView : Control
                 }
 
                 StockPerformance stock = result.Top10[row + 5];
+                bool promoted = stock.EnteredTopTenFromReference || stock.EnteredTopFiveFromReference;
+                if (promoted)
+                {
+                    using (SolidBrush highlight = new SolidBrush(Color.FromArgb(255, 249, 235)))
+                    {
+                        g.FillRectangle(highlight, new Rectangle(table.X, y, table.Width, rowHeight));
+                    }
+                }
+
                 string[] values =
                 {
                     "#" + stock.Rank,
                     stock.Symbol,
                     stock.Name,
                     FormatPercent(stock.ChangePercent),
+                    stock.ReferenceRank > 0 ? "#" + stock.ReferenceRank : "-",
                     FormatPrice(stock.StartPrice),
                     FormatPrice(stock.EndPrice)
                 };
@@ -1234,8 +1482,8 @@ internal sealed class DashboardView : Control
                 for (int col = 0; col < values.Length; col++)
                 {
                     Rectangle cell = new Rectangle(xs[col] + 10, y + 8, xs[col + 1] - xs[col] - 20, 22);
-                    Color color = col == 3 ? Green : TextMain;
-                    Font font = (col == 3 || col == 4 || col == 5) ? rowBold : rowFont;
+                    Color color = col == 3 ? Green : col == 4 && promoted ? Gold : TextMain;
+                    Font font = (col == 3 || col == 4 || col == 5 || col == 6) ? rowBold : rowFont;
                     DrawText(g, values[col], font, color, cell, StringAlignment.Near, StringAlignment.Near);
                 }
             }
@@ -1356,9 +1604,14 @@ internal static class MarketData
 
     public static MarketResult GetTopMovers(int days)
     {
+        return GetTopMovers(days, null);
+    }
+
+    public static MarketResult GetTopMovers(int days, DateTime? referenceDate)
+    {
         ConstituentSet constituentSet = GetConstituents();
         List<Constituent> constituents = constituentSet.Items;
-        List<StockPerformance> performances = FetchPerformancesBatch(constituents, days);
+        List<StockPerformance> performances = FetchPerformancesBatch(constituents, days, null, true);
         List<StockPerformance> ranked = performances.OrderByDescending(s => s.ChangePercent).ToList();
         for (int i = 0; i < ranked.Count; i++)
         {
@@ -1370,6 +1623,13 @@ internal static class MarketData
             throw new InvalidOperationException("Zu wenige Kursdaten verfügbar.");
         }
 
+        var top10 = ranked.Take(10).ToList();
+        DateTime referenceTradingDate = DateTime.MinValue;
+        if (referenceDate.HasValue)
+        {
+            referenceTradingDate = AnnotateReferenceRanks(constituents, top10, days, referenceDate.Value);
+        }
+
         return new MarketResult
         {
             Days = days,
@@ -1377,8 +1637,38 @@ internal static class MarketData
             PricedConstituents = ranked.Count,
             ConstituentSource = constituentSet.Source,
             UpdatedAt = DateTime.Now,
-            Top10 = ranked.Take(10).ToList()
+            ReferenceDate = referenceDate.HasValue ? referenceDate.Value.Date : DateTime.MinValue,
+            ReferenceTradingDate = referenceTradingDate,
+            Top10 = top10
         };
+    }
+
+    private static DateTime AnnotateReferenceRanks(List<Constituent> constituents, List<StockPerformance> currentTop10, int days, DateTime referenceDate)
+    {
+        List<StockPerformance> referencePerformances = FetchPerformancesBatch(constituents, days, referenceDate.Date, false);
+        List<StockPerformance> referenceRanked = referencePerformances.OrderByDescending(s => s.ChangePercent).ToList();
+        for (int i = 0; i < referenceRanked.Count; i++)
+        {
+            referenceRanked[i].Rank = i + 1;
+        }
+
+        var referenceBySymbol = referenceRanked.ToDictionary(stock => stock.Symbol, stock => stock, StringComparer.OrdinalIgnoreCase);
+        foreach (StockPerformance current in currentTop10)
+        {
+            StockPerformance reference;
+            if (!referenceBySymbol.TryGetValue(current.Symbol, out reference))
+            {
+                continue;
+            }
+
+            current.ReferenceRank = reference.Rank;
+            current.ReferenceChangePercent = reference.ChangePercent;
+            current.ReferenceDate = reference.EndDate;
+            current.EnteredTopTenFromReference = current.Rank <= 10 && reference.Rank > 10;
+            current.EnteredTopFiveFromReference = current.Rank <= 5 && reference.Rank > 5;
+        }
+
+        return referenceRanked.Count == 0 ? DateTime.MinValue : referenceRanked.Max(stock => stock.EndDate);
     }
 
     private static ConstituentSet GetConstituents()
@@ -1442,7 +1732,7 @@ internal static class MarketData
         };
     }
 
-    private static List<StockPerformance> FetchPerformancesBatch(List<Constituent> constituents, int days)
+    private static List<StockPerformance> FetchPerformancesBatch(List<Constituent> constituents, int days, DateTime? referenceDate, bool includeCurrentQuotes)
     {
         var results = new ConcurrentBag<StockPerformance>();
         var batches = new List<List<Constituent>>();
@@ -1456,9 +1746,9 @@ internal static class MarketData
         {
             try
             {
-                foreach (StockPerformance performance in FetchSparkBatch(batch, days))
+                foreach (StockPerformance performance in FetchSparkBatch(batch, days, referenceDate, includeCurrentQuotes))
                 {
-                    results.Add(performance);
+                        results.Add(performance);
                 }
             }
             catch
@@ -1467,7 +1757,7 @@ internal static class MarketData
                 {
                     try
                     {
-                        results.Add(FetchPerformance(stock, days));
+                        results.Add(FetchPerformance(stock, days, referenceDate, includeCurrentQuotes));
                     }
                     catch
                     {
@@ -1481,10 +1771,16 @@ internal static class MarketData
 
     private static List<StockPerformance> FetchSparkBatch(List<Constituent> batch, int days)
     {
+        return FetchSparkBatch(batch, days, null, true);
+    }
+
+    private static List<StockPerformance> FetchSparkBatch(List<Constituent> batch, int days, DateTime? referenceDate, bool includeCurrentQuotes)
+    {
         var lookup = batch.ToDictionary(stock => stock.YahooSymbol, stock => stock, StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, CurrentQuote> currentQuotes = FetchCurrentQuotes(batch);
+        Dictionary<string, CurrentQuote> currentQuotes = includeCurrentQuotes ? FetchCurrentQuotes(batch) : new Dictionary<string, CurrentQuote>(StringComparer.OrdinalIgnoreCase);
         string symbols = Uri.EscapeDataString(string.Join(",", batch.Select(stock => stock.YahooSymbol).ToArray()));
-        string url = "https://query1.finance.yahoo.com/v7/finance/spark?symbols=" + symbols + "&range=1y&interval=1d";
+        string range = referenceDate.HasValue ? "2y" : "1y";
+        string url = "https://query1.finance.yahoo.com/v7/finance/spark?symbols=" + symbols + "&range=" + range + "&interval=1d";
         string json = Download(url, MaxYahooBytes);
 
         var serializer = new JavaScriptSerializer();
@@ -1525,7 +1821,7 @@ internal static class MarketData
             }
 
             object[] prices = AsArray(quoteData["close"]);
-            StockPerformance performance = CalculatePerformance(lookup[yahooSymbol], timestamps, prices, days);
+            StockPerformance performance = CalculatePerformance(lookup[yahooSymbol], timestamps, prices, days, referenceDate);
             CurrentQuote currentQuote;
             if (currentQuotes.TryGetValue(yahooSymbol, out currentQuote))
             {
@@ -1714,9 +2010,14 @@ internal static class MarketData
 
     private static StockPerformance FetchPerformance(Constituent stock, int days)
     {
-        DateTime now = DateTime.UtcNow;
-        long from = ToUnixSeconds(now.AddDays(-(days * 2 + 30)));
-        long to = ToUnixSeconds(now.AddDays(1));
+        return FetchPerformance(stock, days, null, true);
+    }
+
+    private static StockPerformance FetchPerformance(Constituent stock, int days, DateTime? referenceDate, bool includeCurrentQuotes)
+    {
+        DateTime end = referenceDate.HasValue ? referenceDate.Value.Date.AddDays(1) : DateTime.UtcNow.AddDays(1);
+        long from = ToUnixSeconds(end.AddDays(-(days * 3 + 30)));
+        long to = ToUnixSeconds(end.AddDays(1));
         string url = "https://query1.finance.yahoo.com/v8/finance/chart/" + Uri.EscapeDataString(stock.YahooSymbol)
             + "?period1=" + from.ToString(CultureInfo.InvariantCulture)
             + "&period2=" + to.ToString(CultureInfo.InvariantCulture)
@@ -1752,12 +2053,15 @@ internal static class MarketData
             prices = AsArray(AsDict(quote[0])["close"]);
         }
 
-        StockPerformance performance = CalculatePerformance(stock, timestamps, prices, days);
-        var quotes = FetchCurrentQuotes(new List<Constituent> { stock });
-        CurrentQuote currentQuote;
-        if (quotes.TryGetValue(stock.YahooSymbol, out currentQuote))
+        StockPerformance performance = CalculatePerformance(stock, timestamps, prices, days, referenceDate);
+        if (includeCurrentQuotes)
         {
-            performance = ApplyCurrentQuote(performance, currentQuote);
+            var quotes = FetchCurrentQuotes(new List<Constituent> { stock });
+            CurrentQuote currentQuote;
+            if (quotes.TryGetValue(stock.YahooSymbol, out currentQuote))
+            {
+                performance = ApplyCurrentQuote(performance, currentQuote);
+            }
         }
 
         return performance;
@@ -1778,7 +2082,11 @@ internal static class MarketData
 
     private static StockPerformance CalculatePerformance(Constituent stock, object[] timestamps, object[] prices, int days)
     {
-        DateTime now = DateTime.UtcNow;
+        return CalculatePerformance(stock, timestamps, prices, days, null);
+    }
+
+    private static StockPerformance CalculatePerformance(Constituent stock, object[] timestamps, object[] prices, int days, DateTime? referenceDate)
+    {
         var points = new List<PricePoint>();
         for (int i = 0; i < timestamps.Length && i < prices.Length; i++)
         {
@@ -1801,6 +2109,12 @@ internal static class MarketData
         }
 
         points = points.OrderBy(p => p.Date).ToList();
+        if (referenceDate.HasValue)
+        {
+            DateTime cutoff = referenceDate.Value.Date;
+            points = points.Where(p => p.Date.Date <= cutoff).ToList();
+        }
+
         if (points.Count < 2)
         {
             throw new InvalidOperationException(stock.Symbol + ": zu wenig Kurshistorie.");
@@ -2134,14 +2448,16 @@ internal static class NativeTest
 
         try
         {
-            MarketResult result = MarketData.GetTopMovers(180);
+            MarketResult result = MarketData.GetTopMovers(180, new DateTime(2026, 1, 1));
             string line = "OK TradingDays=" + result.Days
                 + " Total=" + result.TotalConstituents
                 + " Priced=" + result.PricedConstituents
                 + " Source=" + result.ConstituentSource
+                + " Reference=" + result.ReferenceTradingDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
                 + " Top1=" + result.Top10[0].Symbol
                 + " Top5=" + result.Top10[4].Symbol
-                + " Top6=" + result.Top10[5].Symbol;
+                + " Top6=" + result.Top10[5].Symbol
+                + " Top1ReferenceRank=" + result.Top10[0].ReferenceRank;
             File.WriteAllText(outputPath, line);
         }
         catch (Exception error)
@@ -2214,6 +2530,11 @@ internal sealed class StockPerformance
     public DateTime EndDate;
     public double StartPrice;
     public double EndPrice;
+    public int ReferenceRank;
+    public double ReferenceChangePercent;
+    public DateTime ReferenceDate;
+    public bool EnteredTopTenFromReference;
+    public bool EnteredTopFiveFromReference;
 }
 
 internal sealed class CurrentQuote
@@ -2229,6 +2550,8 @@ internal sealed class MarketResult
     public int PricedConstituents;
     public string ConstituentSource;
     public DateTime UpdatedAt;
+    public DateTime ReferenceDate;
+    public DateTime ReferenceTradingDate;
     public List<StockPerformance> Top10;
 }
 
