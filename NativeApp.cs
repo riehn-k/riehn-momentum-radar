@@ -179,15 +179,20 @@ internal sealed class MomentumRadarForm : Form
         leftTools.Controls.Add(referenceDateLabel);
 
         referenceDatePicker = new MaterialDatePicker();
-        referenceDatePicker.Value = new DateTime(2026, 1, 1);
         referenceDatePicker.MaxDate = DateTime.Today;
+        referenceDatePicker.Value = StateStore.LoadReferenceDate();
         referenceDatePicker.Width = 142;
         referenceDatePicker.Height = 40;
         referenceDatePicker.Margin = new Padding(0, 5, 0, 0);
         referenceDatePicker.Font = new Font("Segoe UI", 10f);
         referenceDatePicker.ValueChanged += delegate
         {
-            if (!isLoading)
+            StateStore.SaveReferenceDate(referenceDatePicker.Value.Date);
+            if (isLoading)
+            {
+                scheduledRefreshPending = true;
+            }
+            else
             {
                 RefreshData();
             }
@@ -307,7 +312,7 @@ internal sealed class MomentumRadarForm : Form
         {
             ApplyLanguage();
             MarketResult cached = StateStore.LoadCachedResult();
-            if (cached != null)
+            if (cached != null && cached.ReferenceDate.Date == referenceDatePicker.Value.Date)
             {
                 Render(cached, false);
                 statusLabel.Text = T("CachedUpdating");
@@ -429,7 +434,14 @@ internal sealed class MomentumRadarForm : Form
                 }
                 else
                 {
-                    Render(task.Result, true);
+                    if (referenceDatePicker.Value.Date == referenceDate)
+                    {
+                        Render(task.Result, true);
+                    }
+                    else
+                    {
+                        scheduledRefreshPending = true;
+                    }
                 }
 
                 RunPendingScheduledRefresh();
@@ -2552,7 +2564,9 @@ internal static class StateStore
     private static readonly string NotificationsPath = Path.Combine(AppDir, "notifications.txt");
     private static readonly string LanguagePath = Path.Combine(AppDir, "language.txt");
     private static readonly string PortfolioPath = Path.Combine(AppDir, "portfolio.txt");
+    private static readonly string ReferenceDatePath = Path.Combine(AppDir, "reference-date.txt");
     private static readonly string CachePath = Path.Combine(AppDir, "last-result.json");
+    private static readonly DateTime DefaultReferenceDate = new DateTime(2026, 1, 1);
 
     public static List<string> LoadTopFive()
     {
@@ -2616,6 +2630,60 @@ internal static class StateStore
     {
         Directory.CreateDirectory(AppDir);
         File.WriteAllText(LanguagePath, LocalizedText.NormalizeLanguage(languageCode));
+    }
+
+    public static DateTime LoadReferenceDate()
+    {
+        try
+        {
+            if (!File.Exists(ReferenceDatePath))
+            {
+                return ClampReferenceDate(DefaultReferenceDate);
+            }
+
+            string text = File.ReadAllText(ReferenceDatePath).Trim();
+            DateTime date;
+            if (DateTime.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date)
+                || DateTime.TryParse(text, CultureInfo.GetCultureInfo("de-DE"), DateTimeStyles.None, out date))
+            {
+                return ClampReferenceDate(date);
+            }
+        }
+        catch
+        {
+        }
+
+        return ClampReferenceDate(DefaultReferenceDate);
+    }
+
+    public static void SaveReferenceDate(DateTime date)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppDir);
+            File.WriteAllText(
+                ReferenceDatePath,
+                ClampReferenceDate(date).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        }
+        catch
+        {
+        }
+    }
+
+    private static DateTime ClampReferenceDate(DateTime date)
+    {
+        DateTime value = date.Date;
+        if (value > DateTime.Today)
+        {
+            return DateTime.Today;
+        }
+
+        if (value < new DateTime(1990, 1, 1))
+        {
+            return DefaultReferenceDate <= DateTime.Today ? DefaultReferenceDate : DateTime.Today;
+        }
+
+        return value;
     }
 
     public static HashSet<string> LoadPortfolioSymbols()
